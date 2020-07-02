@@ -1,0 +1,117 @@
+import matplotlib as plt
+import pandas_datareader as web
+from WindPy import w
+
+w.start() # 默认命令超时时间为120秒，如需设置超时时间可以加入waitTime参数，例如waitTime=60,即设置命令超时时间为60秒  
+
+w.isconnected()
+
+import matplotlib.pyplot as plt
+GK1606=w.wsd("160206.IB","sec_name,close","2017-1-1","2020-01-1","returnType=1;PriceAdj=CP", usedf=True) 
+DR007=w.wsd("DR007.IB","sec_name,close","2017-1-1","2020-01-1","returnType=1;PriceAdj=CP", usedf=True) 
+import pandas as pd
+
+
+df=pd.DataFrame(GK1606[1]["CLOSE"])
+df["ma5"]=df["CLOSE"].rolling(window=5,center=False).mean()
+df["ma20"]=df["CLOSE"].rolling(window=20,center=False).mean()
+df["DR007"]=pd.DataFrame(DR007[1]["CLOSE"])
+df["ma5"].plot(figsize=(25,8),)
+df["ma20"].plot()
+df["CLOSE"].plot()
+plt.legend()
+
+df["pos"]=0
+for i in range(1,len(df)-1):
+    if df["ma5"][i]>=df["ma20"][i]:
+        df["pos"][i+1]=1
+    if df["ma5"][i]<df["ma20"][i]:
+        df["pos"][i+1]=-1
+        
+import numpy as np
+
+cpl=100000000
+df["hold"]=0##初始持仓
+df["tickets"]=0##初始持仓数量
+df["I"]=0##初始票息收入
+df["CG"]=0##初始资本利得
+df["fee"]=0##初始化交易费用
+df["cost"]=0
+df["short"]=0##初始化空仓收益
+df["pnl"]=0##初始利润
+fee=0.0001##手续费
+rate=0.0296
+df["buy"]=0
+df["totalpnl"]=0
+
+
+##第一次买入点确认,获取买入市值，买入张数和买入日票息收入
+for i in range(1,len(df)):
+    if df["pos"][i]==1:
+        df["hold"][i]=df["pos"][i]*cpl*(1-fee)
+        df["tickets"][i]=df["hold"][i]//df["CLOSE"][i]
+        df["I"][i]=df["tickets"][i]*100*rate/365
+        A=i
+        break
+
+for i in range(A+1,len(df)-1):
+    if df["pos"][i+1]!=df["pos"][i]:
+        if df["pos"][i+1]==1:
+            df["hold"][i+1]=df["pos"][i+1]*cpl*(1-fee)+df["totalpnl"][i]
+            df["buy"][i+1]=round(df["CLOSE"][i+1],5)
+            df["tickets"][i+1]=df["hold"][i+1]//df["CLOSE"][i+1]
+            df["I"][i+1]=df["tickets"][i+1]*100*rate/365
+            
+for i in range(A+1,len(df)-1):  
+    if df["hold"][i]!=0:
+        if df["pos"][i+1]!=-1:
+            df["hold"][i+1]=df["hold"][i]*(1+(df["CLOSE"][i+1]-df["CLOSE"][i])/df["CLOSE"][i])
+            df["I"][i]=df["tickets"][i]*100*rate/365
+        else:
+            df["hold"][i+1]=0
+            
+for i in range(A+1,len(df)-1):
+    if df["I"][i]!=0:
+        if df["pos"][i+1]!=-1:
+            df["I"][i+1]=df["I"][i]
+
+            
+for i in range(A+1,len(df)-1):             
+    if df["I"][i]!=0:
+        if df["pos"][i+1]==1:
+            df["I"][i+1]=df["I"][i]
+        else:
+            df["I"][i+1]=0
+    if df["tickets"][i]!=0:
+        if df["pos"][i+1]==1:
+            df["tickets"][i+1]=df["tickets"][i]
+        else:
+            df["tickets"][i+1]=0      
+            
+##计算卖出债券的资本利得收益            
+for i in range(A+1,len(df)-1):
+    if df["pos"][i+1]!=df["pos"][i]:
+        if df["pos"][i+1]==-1:
+            df["CG"][i+1]=(df["CLOSE"][i+1]-df["CLOSE"][i])*df["hold"][i]*(1-0.25) 
+            
+##计算空仓期间资金开展逆回购产生的收益             
+for i in range(A+1,len(df)-1):
+    
+    if df["pos"][i+1]!=df["pos"][i]:
+        if df["pos"][i+1]==-1:
+            df["fee"][i+1]=df["hold"][i]*fee
+            df["short"][i+1]=(df["hold"][i]-df["hold"][i]*fee)*df["DR007"][i+1]/365/100
+for i in range(A+1,len(df)-1):
+    if df["short"][i]!=0:
+        if df["pos"][i+1]==-1:
+            df["short"][i+1]=df["short"][i]/df["DR007"][i]*df["DR007"][i+1]
+for i in range(1,len(df)-1):    
+    if df["pos"][i]!=1:
+        df["cost"][i]=500
+    else:
+        df["cost"][i]=0
+
+for i in range(1,len(df)):
+    df["pnl"][i]=df["I"][i]-df["fee"][i]+df["CG"][i]+df["short"][i]-df["cost"][i]
+    df["totalpnl"]=np.cumsum(df["pnl"][:i])         
+df.to_excel("20200701.xls")
